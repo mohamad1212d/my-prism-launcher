@@ -1244,9 +1244,12 @@ bool Application::createSetupWizard()
     bool pasteInterventionRequired = settings()->get("PastebinURL") != "";
     bool validWidgets = m_themeManager->isValidApplicationTheme(settings()->get("ApplicationTheme").toString());
     bool validIcons = m_themeManager->isValidIconTheme(settings()->get("IconTheme").toString());
-    bool login = !m_accounts->anyAccountIsValid() && capabilities() & Application::SupportsMSA;
+    
+    // [تم التعديل]: إلغاء إجبار صفحة تسجيل الدخول في المعالج
+    bool login = false;
+    
     bool themeInterventionRequired = !validWidgets || !validIcons;
-    bool wizardRequired = javaRequired || languageRequired || pasteInterventionRequired || themeInterventionRequired || askjava || login;
+    bool wizardRequired = javaRequired || languageRequired || pasteInterventionRequired || themeInterventionRequired || askjava;
     if (wizardRequired) {
         // set default theme after going into theme wizard
         if (!validIcons)
@@ -1283,14 +1286,13 @@ bool Application::createSetupWizard()
             m_setupWizard->addPage(new ThemeWizardPage(m_setupWizard));
         }
 
-        if (login) {
-            m_setupWizard->addPage(new LoginWizardPage(m_setupWizard));
-        }
+        // تم حذف صفحة LoginWizardPage من هنا
+
         connect(m_setupWizard, &QDialog::finished, this, &Application::setupWizardFinished);
         m_setupWizard->show();
     }
 
-    return wizardRequired || login;
+    return wizardRequired;
 }
 
 bool Application::updaterEnabled()
@@ -1431,11 +1433,13 @@ Application::~Application()
 
 void Application::messageReceived(const QByteArray& message)
 {
-    ApplicationMessage received;
+ApplicationMessage received;
     received.parse(message);
 
     auto& command = received.command;
 
+    // تم تعطيل التحقق من حالة التهيئة لعدم تجاهل الأوامر في الوضع الأوفلاين
+    /*
     if (status() != Initialized) {
         bool isLoginAtempt = false;
         if (command == "import") {
@@ -1447,6 +1451,7 @@ void Application::messageReceived(const QByteArray& message)
             return;
         }
     }
+    */
 
     if (command == "activate") {
         showMainWindow();
@@ -1486,17 +1491,21 @@ void Application::messageReceived(const QByteArray& message)
         } else if (!world.isEmpty()) {
             serverObject = std::make_shared<MinecraftTarget>(MinecraftTarget::parse(world, true));
         }
+
         MinecraftAccountPtr accountObject;
         if (!profile.isEmpty()) {
             accountObject = accounts()->getAccountByProfileName(profile);
-            if (!accountObject) {
+            // السماح بتجاوز البحث عن البروفايل إذا كان وضع الأوفلاين مفعلاً
+            if (!accountObject && !offline) {
                 qWarning() << "Launch command requires the specified profile to be valid. " << profile
                            << "does not resolve to any account.";
                 return;
             }
         }
 
-        launch(instance, offline ? LaunchMode::Offline : LaunchMode::Normal, serverObject, accountObject, offlineName);
+        // إجبار التشغيل على OfflineMode إذا طُلب أو إذا لم يوجد حساب أونلاين
+        LaunchMode mode = (offline || !accountObject) ? LaunchMode::Offline : LaunchMode::Normal;
+        launch(instance, mode, serverObject, accountObject, offlineName);
     } else {
         qWarning() << "Received invalid message" << message;
     }

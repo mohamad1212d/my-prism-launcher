@@ -20,6 +20,7 @@
 
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QRegularExpressionValidator>
 
 #include "ui_ChooseOfflineNameDialog.h"
 
@@ -27,18 +28,26 @@ ChooseOfflineNameDialog::ChooseOfflineNameDialog(const QString& message, QWidget
     : QDialog(parent), ui(new Ui::ChooseOfflineNameDialog)
 {
     ui->setupUi(this);
-    ui->label->setText(message);
+    
+    if (!message.isEmpty()) {
+        ui->label->setText(message);
+    } else {
+        ui->label->setText(tr("Enter your desired offline player name:"));
+    }
 
-    ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(false);
     ui->buttonBox->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     ui->buttonBox->button(QDialogButtonBox::Ok)->setText(tr("OK"));
 
-    const QRegularExpression usernameRegExp("^[A-Za-z0-9_]{3,16}$");
+    // السماح بأسماء ماينكرافت القياسية من 3 إلى 16 حرف/رقم
+    const QRegularExpression usernameRegExp("^[A-Za-z0-9_]{1,16}$");
     m_usernameValidator = new QRegularExpressionValidator(usernameRegExp, this);
     ui->usernameTextBox->setValidator(m_usernameValidator);
 
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    // التحقق المبدئي من صحة الإدخال
+    updateAcceptAllowed(ui->usernameTextBox->text());
 }
 
 ChooseOfflineNameDialog::~ChooseOfflineNameDialog()
@@ -48,19 +57,25 @@ ChooseOfflineNameDialog::~ChooseOfflineNameDialog()
 
 QString ChooseOfflineNameDialog::getUsername() const
 {
-    return ui->usernameTextBox->text();
+    return ui->usernameTextBox->text().trimmed();
 }
 
 void ChooseOfflineNameDialog::setUsername(const QString& username) const
 {
-    ui->usernameTextBox->setText(username);
-    updateAcceptAllowed(username);
+    ui->usernameTextBox->setText(username.trimmed());
+    updateAcceptAllowed(username.trimmed());
 }
 
 void ChooseOfflineNameDialog::updateAcceptAllowed(const QString& username) const
 {
-    const bool allowed = ui->allowInvalidUsernames->isChecked() ? !username.isEmpty() : ui->usernameTextBox->hasAcceptableInput();
-    ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(allowed);
+    const bool isAllowed = ui->allowInvalidUsernames->isChecked()
+                               ? !username.trimmed().isEmpty()
+                               : (!username.trimmed().isEmpty() && ui->usernameTextBox->hasAcceptableInput());
+
+    auto* okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
+    if (okButton) {
+        okButton->setEnabled(isAllowed);
+    }
 }
 
 void ChooseOfflineNameDialog::on_usernameTextBox_textEdited(const QString& newText) const

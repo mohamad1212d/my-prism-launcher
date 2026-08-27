@@ -142,8 +142,8 @@ void AccountList::addAccount(const MinecraftAccountPtr account)
     m_accounts.append(account);
     endInsertRows();
 
-    // إذا كان هذا هو الحساب الوحيد، نجعله الحساب الافتراضي تلقائياً
-    if (m_accounts.count() == 1 && !m_defaultAccount) {
+    // إذا كان هذا هو الحساب الأول المضاف، عينه كافتراضي تلقائياً
+    if (m_accounts.count() == 1 || !m_defaultAccount) {
         m_defaultAccount = account;
         onDefaultAccountChanged();
     }
@@ -347,7 +347,6 @@ QVariant AccountList::data(const QModelIndex& index, int role) const
                     return tr("Unknown", "Account type");
                 }
                 case StatusColumn:
-                    // الحسابات الأوفلاين تظهر دائماً بحالة Ready / Offline صالحة
                     if (account->accountType() == AccountType::Offline || account->isOffline()) {
                         return QObject::tr("Offline Ready", "Account status");
                     }
@@ -507,7 +506,6 @@ bool AccountList::loadV3(QJsonObject& root)
         }
     }
 
-    // إذا لم يكن هناك حساب افتراضي وتم تحميل حساب أوفلاين/أونلاين، نختاره
     if (!m_defaultAccount && !m_accounts.isEmpty()) {
         m_defaultAccount = m_accounts.first();
     }
@@ -573,21 +571,35 @@ void AccountList::setListFilePath(QString path, bool autosave)
     m_autosave = autosave;
 }
 
+// [تعديل أساسي]: السماح دائماً دون قيود
 bool AccountList::anyAccountIsValid()
 {
-    // [تعديل أساسي]: يقبل أي حساب يملك اللعبة أو أي حساب Offline
+    return true;
+}
+
+bool AccountList::anyAccountOwnsMinecraft() const
+{
+    return true;
+}
+
+bool AccountList::hasOfflineAccounts() const
+{
     for (auto account : m_accounts) {
-        if (!account) continue;
-        if (account->accountType() == AccountType::Offline || account->isOffline() || account->ownsMinecraft()) {
+        if (account && (account->accountType() == AccountType::Offline || account->isOffline())) {
             return true;
         }
     }
-    return false;
+    return true;
+}
+
+bool AccountList::hasActiveAccount() const
+{
+    return true;
 }
 
 void AccountList::fillQueue()
 {
-    // استثناء حسابات الـ Offline من طابور التحديث الدوري
+    // تخطي الحسابات الأوفلاين حتى لا ترسل طلبات تحديث شبكية
     if (m_defaultAccount && m_defaultAccount->accountType() != AccountType::Offline && m_defaultAccount->shouldRefresh()) {
         auto idToRefresh = m_defaultAccount->internalId();
         m_refreshQueue.push_back(idToRefresh);
@@ -600,7 +612,6 @@ void AccountList::fillQueue()
             continue;
         }
 
-        // تخطي حسابات الأوفلاين
         if (account->accountType() == AccountType::Offline || account->isOffline()) {
             continue;
         }
@@ -615,7 +626,6 @@ void AccountList::fillQueue()
 
 void AccountList::requestRefresh(QString accountId)
 {
-    // إذا كان الحساب أوفلاين، لا داعي لطلب التحديث من السيرفرات
     for (int i = 0; i < count(); i++) {
         auto account = at(i);
         if (account->internalId() == accountId && (account->accountType() == AccountType::Offline || account->isOffline())) {
@@ -656,7 +666,6 @@ void AccountList::tryNext()
             if (account->internalId() == accountId) {
                 found = true;
 
-                // حماية إضافية: عدم تشغيل refresh على حساب Offline
                 if (account->accountType() == AccountType::Offline || account->isOffline()) {
                     m_explicitRefreshes.remove(accountId);
                     break;

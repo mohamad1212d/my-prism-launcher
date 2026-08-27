@@ -5,10 +5,11 @@
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QPushButton>
+#include <QInputDialog>
+#include <QLineEdit>
 
 #include <QDebug>
 
-#include "ui/dialogs/ChooseOfflineNameDialog.h"
 #include "ui/dialogs/CustomMessageBox.h"
 #include "ui/dialogs/MSALoginDialog.h"
 
@@ -19,7 +20,7 @@ AccountListPage::AccountListPage(QWidget* parent) : QMainWindow(parent), ui(new 
     ui->setupUi(this);
     ui->listView->setEmptyString(
         tr("Welcome!\n"
-           "If you're new here, you can select the \"Add Microsoft\" button to link your Microsoft account."));
+           "You can add a Microsoft account or create an Offline profile to play Minecraft."));
     ui->listView->setEmptyMode(VersionListView::String);
     ui->listView->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -101,17 +102,30 @@ void AccountListPage::on_actionAddMicrosoft_triggered()
 
 void AccountListPage::on_actionAddOffline_triggered()
 {
-    ChooseOfflineNameDialog dialog(tr("Please enter your desired username to add your offline account."), this);
-    if (dialog.exec() != QDialog::Accepted) {
+    // [تم التعديل]: إزالة ChooseOfflineNameDialog المزعجة التي تفرض حساب مايكروسوفت
+    // واستبدالها بنافذة إدخال اسم مباشر بدون أي شروط
+    bool ok = false;
+    QString username = QInputDialog::getText(
+        this,
+        tr("Add Offline Account"),
+        tr("Enter your player username:"),
+        QLineEdit::Normal,
+        QString(),
+        &ok
+    );
+
+    if (!ok || username.trimmed().isEmpty()) {
         return;
     }
 
-    if (const MinecraftAccountPtr account = MinecraftAccount::createOffline(dialog.getUsername())) {
-        account->login()->start();
+    username = username.trimmed();
+
+    if (const MinecraftAccountPtr account = MinecraftAccount::createOffline(username)) {
         m_accounts->addAccount(account);
-        if (m_accounts->count() == 1) {
+        if (m_accounts->count() == 1 || !m_accounts->defaultAccount()) {
             m_accounts->setDefaultAccount(account);
         }
+        updateButtonStates();
     }
 }
 
@@ -136,7 +150,9 @@ void AccountListPage::on_actionRefresh_triggered()
     if (selection.size() > 0) {
         QModelIndex selected = selection.first();
         MinecraftAccountPtr account = selected.data(AccountList::PointerRole).value<MinecraftAccountPtr>();
-        m_accounts->requestRefresh(account->internalId());
+        if (account && account->accountType() != AccountType::Offline) {
+            m_accounts->requestRefresh(account->internalId());
+        }
     }
 }
 
@@ -166,12 +182,14 @@ void AccountListPage::updateButtonStates()
     if (hasSelection) {
         QModelIndex selected = selection.first();
         MinecraftAccountPtr account = selected.data(AccountList::PointerRole).value<MinecraftAccountPtr>();
-        accountIsReady = !account->isActive();
-        accountIsOnline = account->accountType() != AccountType::Offline;
+        if (account) {
+            accountIsReady = !account->isActive();
+            accountIsOnline = account->accountType() != AccountType::Offline;
 
-        accountCanMoveUp = selected.row() > 0;
-        int indexOfLast = m_accounts->count() - 1;
-        accountCanMoveDown = selected.row() < indexOfLast;
+            accountCanMoveUp = selected.row() > 0;
+            int indexOfLast = m_accounts->count() - 1;
+            accountCanMoveDown = selected.row() < indexOfLast;
+        }
     }
     ui->actionRemove->setEnabled(accountIsReady);
     ui->actionSetDefault->setEnabled(accountIsReady);
@@ -196,8 +214,10 @@ void AccountListPage::on_actionManageSkins_triggered()
     if (selection.size() > 0) {
         QModelIndex selected = selection.first();
         MinecraftAccountPtr account = selected.data(AccountList::PointerRole).value<MinecraftAccountPtr>();
-        SkinManageDialog dialog(this, account);
-        dialog.exec();
+        if (account && account->accountType() != AccountType::Offline) {
+            SkinManageDialog dialog(this, account);
+            dialog.exec();
+        }
     }
 }
 
