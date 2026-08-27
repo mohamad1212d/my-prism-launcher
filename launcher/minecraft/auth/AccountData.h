@@ -86,6 +86,10 @@ struct MinecraftProfile {
     QString currentCape;
     QMap<QString, Cape> capes;
     Validity validity = Validity::None;
+
+    bool isValid() const {
+        return !name.trimmed().isEmpty();
+    }
 };
 
 enum class AccountType { MSA, Offline };
@@ -103,6 +107,27 @@ struct AccountData {
     QString profileName() const;
 
     QString lastError() const;
+
+    //! Returns true if this is an offline account
+    bool isOffline() const {
+        return type == AccountType::Offline;
+    }
+
+    //! Returns true if the account owns Minecraft (always true for offline accounts)
+    bool ownsMinecraft() const {
+        if (isOffline()) {
+            return true;
+        }
+        return minecraftEntitlement.ownsMinecraft;
+    }
+
+    //! Returns true if the account can launch Minecraft (always true for valid offline profiles)
+    bool canPlay() const {
+        if (isOffline()) {
+            return !minecraftProfile.name.trimmed().isEmpty();
+        }
+        return minecraftEntitlement.canPlayMinecraft && minecraftProfile.isValid();
+    }
 
     AccountType type = AccountType::MSA;
 

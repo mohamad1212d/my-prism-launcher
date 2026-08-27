@@ -1,39 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-only
-/*
- *  Prism Launcher - Minecraft Launcher
- *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, version 3.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * This file incorporates work covered by the following copyright and
- * permission notice:
- *
- *      Copyright 2013-2021 MultiMC Contributors
- *
- *      Licensed under the Apache License, Version 2.0 (the "License");
- *      you may not use this file except in compliance with the License.
- *      You may obtain a copy of the License at
- *
- *          http://www.apache.org/licenses/LICENSE-2.0
- *
- *      Unless required by applicable law or agreed to in writing, software
- *      distributed under the License is distributed on an "AS IS" BASIS,
- *      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *      See the License for the specific language governing permissions and
- *      limitations under the License.
- */
-
 #include "AccountData.h"
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -41,6 +7,29 @@
 #include <QUuid>
 
 namespace {
+
+QString generateOfflineUUIDv3(const QString& username)
+{
+    if (username.trimmed().isEmpty()) {
+        return QString();
+    }
+    QByteArray input = QString("OfflinePlayer:%1").arg(username.trimmed()).toUtf8();
+    QByteArray hash = QCryptographicHash::hash(input, QCryptographicHash::Md5);
+    if (hash.size() < 16) {
+        return QString();
+    }
+    hash[6] = static_cast<char>((hash[6] & 0x0f) | 0x30); // Version 3
+    hash[8] = static_cast<char>((hash[8] & 0x3f) | 0x80); // Variant IETF
+
+    const QString hex = QString::fromLatin1(hash.toHex());
+    return QString("%1-%2-%3-%4-%5")
+        .arg(hex.mid(0, 8))
+        .arg(hex.mid(8, 4))
+        .arg(hex.mid(12, 4))
+        .arg(hex.mid(16, 4))
+        .arg(hex.mid(20, 12));
+}
+
 void tokenToJSONV3(QJsonObject& parent, const Token& t, const char* tokenName)
 {
     if (!t.persistent) {
@@ -110,7 +99,7 @@ Token tokenFromJSONV3(const QJsonObject& parent, const char* tokenName)
 
 void profileToJSONV3(QJsonObject& parent, MinecraftProfile p, const char* tokenName)
 {
-    if (p.id.isEmpty()) {
+    if (p.id.isEmpty() && p.name.isEmpty()) {
         return;
     }
     QJsonObject out;
@@ -120,11 +109,11 @@ void profileToJSONV3(QJsonObject& parent, MinecraftProfile p, const char* tokenN
         out["cape"] = p.currentCape;
     }
 
-    {
+    if (!p.skin.url.isEmpty() || p.skin.data.size() > 0) {
         QJsonObject skinObj;
         skinObj["id"] = p.skin.id;
         skinObj["url"] = p.skin.url;
-        skinObj["variant"] = p.skin.variant;
+        skinObj["variant"] = p.skin.variant.isEmpty() ? "classic" : p.skin.variant;
         if (p.skin.data.size()) {
             skinObj["data"] = QString::fromLatin1(p.skin.data.toBase64());
         }
@@ -142,7 +131,9 @@ void profileToJSONV3(QJsonObject& parent, MinecraftProfile p, const char* tokenN
         }
         capesArray.push_back(capeObj);
     }
-    out["capes"] = capesArray;
+    if (!capesArray.isEmpty()) {
+        out["capes"] = capesArray;
+    }
     parent[tokenName] = out;
 }
 
@@ -156,83 +147,70 @@ MinecraftProfile profileFromJSONV3(const QJsonObject& parent, const char* tokenN
     {
         auto idV = tokenObject.value("id");
         auto nameV = tokenObject.value("name");
-        if (!idV.isString() || !nameV.isString()) {
-            qWarning() << "mandatory profile attributes are missing or of unexpected type";
+        if (!nameV.isString() || nameV.toString().trimmed().isEmpty()) {
+            qWarning() << "profile name is missing or invalid";
             return MinecraftProfile();
         }
         out.name = nameV.toString();
-        out.id = idV.toString();
+        
+        if (idV.isString() && !idV.toString().isEmpty()) {
+            out.id = idV.toString();
+        } else {
+            out.id = generateOfflineUUIDv3(out.name);
+        }
     }
 
     {
         auto skinV = tokenObject.value("skin");
-        if (!skinV.isObject()) {
-            qWarning() << "skin is missing";
-            return MinecraftProfile();
-        }
-        auto skinObj = skinV.toObject();
-        auto idV = skinObj.value("id");
-        auto urlV = skinObj.value("url");
-        auto variantV = skinObj.value("variant");
-        if (!idV.isString() || !urlV.isString() || !variantV.isString()) {
-            qWarning() << "mandatory skin attributes are missing or of unexpected type";
-            return MinecraftProfile();
-        }
-        out.skin.id = idV.toString();
-        out.skin.url = urlV.toString();
-        out.skin.url.replace("http://textures.minecraft.net", "https://textures.minecraft.net");
-        out.skin.variant = variantV.toString();
+        if (skinV.isObject()) {
+            auto skinObj = skinV.toObject();
+            auto idV = skinObj.value("id");
+            auto urlV = skinObj.value("url");
+            auto variantV = skinObj.value("variant");
 
-        // data for skin is optional
-        auto dataV = skinObj.value("data");
-        if (dataV.isString()) {
-            // TODO: validate base64
-            out.skin.data = QByteArray::fromBase64(dataV.toString().toLatin1());
-        } else if (!dataV.isUndefined()) {
-            qWarning() << "skin data is something unexpected";
-            return MinecraftProfile();
+            if (idV.isString()) out.skin.id = idV.toString();
+            if (urlV.isString()) {
+                out.skin.url = urlV.toString();
+                out.skin.url.replace("http://textures.minecraft.net", "https://textures.minecraft.net");
+            }
+            if (variantV.isString()) {
+                out.skin.variant = variantV.toString();
+            } else {
+                out.skin.variant = "classic";
+            }
+
+            auto dataV = skinObj.value("data");
+            if (dataV.isString()) {
+                out.skin.data = QByteArray::fromBase64(dataV.toString().toLatin1());
+            }
         }
     }
 
     {
         auto capesV = tokenObject.value("capes");
-        if (!capesV.isArray()) {
-            qWarning() << "capes is not an array!";
-            return MinecraftProfile();
-        }
-        auto capesArray = capesV.toArray();
-        for (auto capeV : capesArray) {
-            if (!capeV.isObject()) {
-                qWarning() << "cape is not an object!";
-                return MinecraftProfile();
-            }
-            auto capeObj = capeV.toObject();
-            auto idV = capeObj.value("id");
-            auto urlV = capeObj.value("url");
-            auto aliasV = capeObj.value("alias");
-            if (!idV.isString() || !urlV.isString() || !aliasV.isString()) {
-                qWarning() << "mandatory skin attributes are missing or of unexpected type";
-                return MinecraftProfile();
-            }
-            Cape cape;
-            cape.id = idV.toString();
-            cape.url = urlV.toString();
-            cape.url.replace("http://textures.minecraft.net", "https://textures.minecraft.net");
-            cape.alias = aliasV.toString();
+        if (capesV.isArray()) {
+            auto capesArray = capesV.toArray();
+            for (auto capeV : capesArray) {
+                if (capeV.isObject()) {
+                    auto capeObj = capeV.toObject();
+                    Cape cape;
+                    cape.id = capeObj.value("id").toString();
+                    cape.url = capeObj.value("url").toString();
+                    cape.url.replace("http://textures.minecraft.net", "https://textures.minecraft.net");
+                    cape.alias = capeObj.value("alias").toString();
 
-            // data for cape is optional.
-            auto dataV = capeObj.value("data");
-            if (dataV.isString()) {
-                // TODO: validate base64
-                cape.data = QByteArray::fromBase64(dataV.toString().toLatin1());
-            } else if (!dataV.isUndefined()) {
-                qWarning() << "cape data is something unexpected";
-                return MinecraftProfile();
+                    auto dataV = capeObj.value("data");
+                    if (dataV.isString()) {
+                        cape.data = QByteArray::fromBase64(dataV.toString().toLatin1());
+                    }
+                    if (!cape.id.isEmpty()) {
+                        out.capes[cape.id] = cape;
+                    }
+                }
             }
-            out.capes[cape.id] = cape;
         }
     }
-    // current cape
+
     {
         auto capeV = tokenObject.value("cape");
         if (capeV.isString()) {
@@ -242,6 +220,7 @@ MinecraftProfile profileFromJSONV3(const QJsonObject& parent, const char* tokenN
             }
         }
     }
+
     out.validity = Validity::Assumed;
     return out;
 }
@@ -300,23 +279,35 @@ bool AccountData::resumeStateFromV3(QJsonObject data)
         auto clientIDV = data.value("msa-client-id");
         if (clientIDV.isString()) {
             msaClientID = clientIDV.toString();
-        }  // leave msaClientID empty if it doesn't exist or isn't a string
+        }
         msaToken = tokenFromJSONV3(data, "msa");
         userToken = tokenFromJSONV3(data, "utoken");
         mojangservicesToken = tokenFromJSONV3(data, "xrp-mc");
     }
 
     yggdrasilToken = tokenFromJSONV3(data, "ygg");
-    // versions before 7.2 used "offline" as the offline token
-    if (yggdrasilToken.token == "offline")
+    if (yggdrasilToken.token == "offline" || (type == AccountType::Offline && yggdrasilToken.token.isEmpty())) {
         yggdrasilToken.token = "0";
+        yggdrasilToken.validity = Validity::Assumed;
+    }
 
     minecraftProfile = profileFromJSONV3(data, "profile");
-    if (!entitlementFromJSONV3(data, minecraftEntitlement)) {
-        if (minecraftProfile.validity != Validity::None) {
-            minecraftEntitlement.canPlayMinecraft = true;
-            minecraftEntitlement.ownsMinecraft = true;
-            minecraftEntitlement.validity = Validity::Assumed;
+
+    if (type == AccountType::Offline) {
+        if (minecraftProfile.id.isEmpty() && !minecraftProfile.name.isEmpty()) {
+            minecraftProfile.id = generateOfflineUUIDv3(minecraftProfile.name);
+            minecraftProfile.validity = Validity::Assumed;
+        }
+        minecraftEntitlement.canPlayMinecraft = true;
+        minecraftEntitlement.ownsMinecraft = true;
+        minecraftEntitlement.validity = Validity::Assumed;
+    } else {
+        if (!entitlementFromJSONV3(data, minecraftEntitlement)) {
+            if (minecraftProfile.validity != Validity::None) {
+                minecraftEntitlement.canPlayMinecraft = true;
+                minecraftEntitlement.ownsMinecraft = true;
+                minecraftEntitlement.validity = Validity::Assumed;
+            }
         }
     }
 
@@ -339,17 +330,33 @@ QJsonObject AccountData::saveState() const
 
     tokenToJSONV3(output, yggdrasilToken, "ygg");
     profileToJSONV3(output, minecraftProfile, "profile");
-    entitlementToJSONV3(output, minecraftEntitlement);
+
+    if (type == AccountType::Offline) {
+        MinecraftEntitlement offlineEntitlement;
+        offlineEntitlement.ownsMinecraft = true;
+        offlineEntitlement.canPlayMinecraft = true;
+        offlineEntitlement.validity = Validity::Assumed;
+        entitlementToJSONV3(output, offlineEntitlement);
+    } else {
+        entitlementToJSONV3(output, minecraftEntitlement);
+    }
+
     return output;
 }
 
 QString AccountData::accessToken() const
 {
+    if (type == AccountType::Offline && (yggdrasilToken.token.isEmpty() || yggdrasilToken.token == "offline")) {
+        return "0";
+    }
     return yggdrasilToken.token;
 }
 
 QString AccountData::profileId() const
 {
+    if (type == AccountType::Offline && minecraftProfile.id.isEmpty() && !minecraftProfile.name.isEmpty()) {
+        return generateOfflineUUIDv3(minecraftProfile.name);
+    }
     return minecraftProfile.id;
 }
 

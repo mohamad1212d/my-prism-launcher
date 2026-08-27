@@ -1,40 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-only
-/*
- *  Prism Launcher - Minecraft Launcher
- *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, version 3.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * This file incorporates work covered by the following copyright and
- * permission notice:
- *
- *      Copyright 2013-2021 MultiMC Contributors
- *
- *      Authors: Orochimarufan <orochimarufan.x3@gmail.com>
- *
- *      Licensed under the Apache License, Version 2.0 (the "License");
- *      you may not use this file except in compliance with the License.
- *      You may obtain a copy of the License at
- *
- *          http://www.apache.org/licenses/LICENSE-2.0
- *
- *      Unless required by applicable law or agreed to in writing, software
- *      distributed under the License is distributed on an "AS IS" BASIS,
- *      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *      See the License for the specific language governing permissions and
- *      limitations under the License.
- */
-
 #include "MinecraftAccount.h"
 
 #include <QColor>
@@ -47,11 +10,11 @@
 #include <QUuid>
 
 #include <QDebug>
-
 #include <QPainter>
 
 #include "minecraft/auth/AccountData.h"
 #include "minecraft/auth/AuthFlow.h"
+#include "minecraft/auth/AuthSession.h"
 
 MinecraftAccount::MinecraftAccount(QObject* parent) : QObject(parent)
 {
@@ -83,9 +46,18 @@ MinecraftAccountPtr MinecraftAccount::createOffline(const QString& username)
     account->data.yggdrasilToken.issueInstant = QDateTime::currentDateTimeUtc();
     account->data.yggdrasilToken.extra["userName"] = username;
     account->data.yggdrasilToken.extra["clientToken"] = QUuid::createUuid().toString(QUuid::Id128);
-    account->data.minecraftProfile.id = uuidFromUsername(username).toString(QUuid::Id128);
+    
     account->data.minecraftProfile.name = username;
+    account->data.minecraftProfile.id = uuidFromUsername(username).toString(QUuid::Id128);
     account->data.minecraftProfile.validity = Validity::Certain;
+    
+    // [تعديل أساسي]: تفعيل الملكية وتصريح اللعب الكامل للحساب الأوفلاين
+    account->data.minecraftEntitlement.ownsMinecraft = true;
+    account->data.minecraftEntitlement.canPlayMinecraft = true;
+    account->data.minecraftEntitlement.validity = Validity::Certain;
+    
+    account->data.accountState = AccountState::Offline;
+    account->data.validity_ = Validity::Certain;
     return account;
 }
 
@@ -94,8 +66,53 @@ QJsonObject MinecraftAccount::saveToJson() const
     return data.saveState();
 }
 
+AccountType MinecraftAccount::accountType() const
+{
+    return data.type;
+}
+
+bool MinecraftAccount::isOffline() const
+{
+    return data.type == AccountType::Offline;
+}
+
+bool MinecraftAccount::ownsMinecraft() const
+{
+    // [تعديل أساسي]: إرجاع true دائماً للحسابات الأوفلاين
+    if (data.type == AccountType::Offline || isOffline()) {
+        return true;
+    }
+    return data.minecraftEntitlement.ownsMinecraft;
+}
+
+bool MinecraftAccount::canPlayOnline() const
+{
+    return data.type != AccountType::Offline && ownsMinecraft() && data.minecraftProfile.isValid();
+}
+
+bool MinecraftAccount::canPlayOffline() const
+{
+    if (data.type == AccountType::Offline) {
+        return !data.minecraftProfile.name.trimmed().isEmpty();
+    }
+    return data.minecraftProfile.isValid();
+}
+
+QString MinecraftAccount::profileName() const
+{
+    return data.profileName();
+}
+
+QString MinecraftAccount::profileId() const
+{
+    return data.profileId();
+}
+
 AccountState MinecraftAccount::accountState() const
 {
+    if (isOffline()) {
+        return AccountState::Offline;
+    }
     return data.accountState;
 }
 
@@ -115,6 +132,12 @@ QPixmap MinecraftAccount::getFace(int width, int height) const
 
 shared_qobject_ptr<AuthFlow> MinecraftAccount::login(bool useDeviceCode)
 {
+    if (isOffline()) {
+        qDebug() << "Skipping online AuthFlow for offline account:" << profileName();
+        emit changed();
+        return nullptr;
+    }
+
     Q_ASSERT(m_currentTask.get() == nullptr);
 
     m_currentTask.reset(new AuthFlow(&data, useDeviceCode ? AuthFlow::Action::DeviceCode : AuthFlow::Action::Login));
@@ -127,6 +150,10 @@ shared_qobject_ptr<AuthFlow> MinecraftAccount::login(bool useDeviceCode)
 
 shared_qobject_ptr<AuthFlow> MinecraftAccount::refresh()
 {
+    if (isOffline()) {
+        return nullptr;
+    }
+
     if (m_currentTask) {
         return m_currentTask;
     }
@@ -193,6 +220,9 @@ void MinecraftAccount::authFailed(QString reason)
 
 QString MinecraftAccount::displayName() const
 {
+    if (isOffline()) {
+        return profileName();
+    }
     if (const QList validStates{ AccountState::Unchecked, AccountState::Working, AccountState::Offline, AccountState::Online }; !validStates.contains(accountState())) {
         return QString("⚠ %1").arg(profileName());
     }
@@ -206,12 +236,11 @@ bool MinecraftAccount::isActive() const
 
 bool MinecraftAccount::shouldRefresh() const
 {
-    /*
-     * Never refresh accounts that are being used by the game, it breaks the game session.
-     * Always refresh accounts that have not been refreshed yet during this session.
-     * Don't refresh broken accounts.
-     * Refresh accounts that would expire in the next 12 hours (fresh token validity is 24 hours).
-     */
+    // [تعديل أساسي]: لا تقم بتحديث حسابات الأوفلاين مطلقاً
+    if (data.type == AccountType::Offline || isOffline()) {
+        return false;
+    }
+
     if (isInUse()) {
         return false;
     }
@@ -241,20 +270,33 @@ bool MinecraftAccount::shouldRefresh() const
 
 void MinecraftAccount::fillSession(AuthSessionPtr session)
 {
-    // volatile auth token
-    session->access_token = data.accessToken();
+    if (!session) {
+        return;
+    }
+
+    // volatile auth token (0 for offline)
+    session->access_token = data.accessToken().isEmpty() ? "0" : data.accessToken();
     // profile name
     session->player_name = data.profileName();
     // profile ID
     session->uuid = data.profileId();
-    if (session->uuid.isEmpty())
+    if (session->uuid.isEmpty()) {
         session->uuid = uuidFromUsername(session->player_name).toString(QUuid::Id128);
+    }
+    
     // 'legacy' or 'mojang', depending on account type
-    session->user_type = typeString();
-    if (!session->access_token.isEmpty()) {
-        session->session = "token:" + data.accessToken() + ":" + data.profileId();
+    session->user_type = isOffline() ? "legacy" : typeString();
+    
+    if (isOffline()) {
+        session->session = "token:0:" + session->uuid;
+        session->status = AuthSession::PlayableOffline;
+        session->wants_offline = true;
     } else {
-        session->session = "-";
+        if (!session->access_token.isEmpty()) {
+            session->session = "token:" + data.accessToken() + ":" + data.profileId();
+        } else {
+            session->session = "-";
+        }
     }
 }
 
@@ -263,7 +305,6 @@ void MinecraftAccount::decrementUses()
     Usable::decrementUses();
     if (!isInUse()) {
         emit changed();
-        // FIXME: we now need a better way to identify accounts...
         qWarning() << "Profile" << data.profileId() << "is no longer in use.";
     }
 }
@@ -274,14 +315,13 @@ void MinecraftAccount::incrementUses()
     Usable::incrementUses();
     if (!wasInUse) {
         emit changed();
-        // FIXME: we now need a better way to identify accounts...
         qWarning() << "Profile" << data.profileId() << "is now in use.";
     }
 }
 
 QUuid MinecraftAccount::uuidFromUsername(QString username)
 {
-    auto input = QString("OfflinePlayer:%1").arg(username).toUtf8();
+    auto input = QString("OfflinePlayer:%1").arg(username.trimmed()).toUtf8();
 
     // basically a reimplementation of Java's UUID#nameUUIDFromBytes
     QByteArray digest = QCryptographicHash::hash(input, QCryptographicHash::Md5);

@@ -69,7 +69,7 @@ struct AccountProfile {
 };
 
 /**
- * Object that stores information about a certain Mojang account.
+ * Object that stores information about a certain Mojang / Microsoft / Offline account.
  *
  * Said information may include things such as that account's username, client token, and access
  * token if the user chose to stay logged in.
@@ -116,9 +116,22 @@ class MinecraftAccount : public QObject, public Usable {
 
     AccountType accountType() const noexcept { return data.type; }
 
-    bool ownsMinecraft() const { return true; }
+    bool isOffline() const noexcept { return data.isOffline(); }
 
-    bool hasProfile() const { return data.profileId().size() != 0; }
+    //! Always returns true for Offline profiles, or verifies Microsoft entitlement
+    bool ownsMinecraft() const {
+        if (isOffline()) {
+            return true;
+        }
+        return data.minecraftEntitlement.ownsMinecraft;
+    }
+
+    bool canPlayOnline() const;
+    bool canPlayOffline() const;
+
+    bool hasProfile() const {
+        return !data.profileName().isEmpty() && data.profileName() != QObject::tr("No Minecraft profile");
+    }
 
     QString typeString() const
     {
@@ -155,8 +168,6 @@ class MinecraftAccount : public QObject, public Usable {
     void changed();
 
     void activityChanged(bool active);
-
-    // TODO: better signalling for the various possible state changes - especially errors
 
    protected: /* variables */
     AccountData data;

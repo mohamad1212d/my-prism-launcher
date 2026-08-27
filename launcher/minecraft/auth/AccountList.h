@@ -45,7 +45,7 @@
 #include <QVariant>
 
 /*!
- * List of available Mojang accounts.
+ * List of available Mojang / Microsoft / Offline accounts.
  * This should be loaded in the background by Prism Launcher on startup.
  */
 class AccountList : public QAbstractListModel {
@@ -54,7 +54,6 @@ class AccountList : public QAbstractListModel {
     enum ModelRoles { PointerRole = 0x34B1CB48 };
 
     enum VListColumns {
-        // TODO: Add icon column.
         ProfileNameColumn = 0,
         TypeColumn,
         StatusColumn,
@@ -62,7 +61,7 @@ class AccountList : public QAbstractListModel {
         NUM_COLUMNS
     };
 
-    explicit AccountList(QObject* parent = 0);
+    explicit AccountList(QObject* parent = nullptr);
     virtual ~AccountList() noexcept;
 
     const MinecraftAccountPtr at(int i) const;
@@ -103,7 +102,18 @@ class AccountList : public QAbstractListModel {
 
     MinecraftAccountPtr defaultAccount() const;
     void setDefaultAccount(MinecraftAccountPtr profileId);
+    
+    // Checks if any account is currently valid
     bool anyAccountIsValid();
+
+    // Checks if any account owns Minecraft (returns true for offline profiles as well)
+    bool anyAccountOwnsMinecraft() const;
+
+    // Returns true if at least one offline account is present
+    bool hasOfflineAccounts() const;
+
+    // Returns true if there is at least one active or configured account
+    bool hasActiveAccount() const;
 
     bool isActive() const;
 

@@ -1,39 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-only
-/*
- *  Prism Launcher - Minecraft Launcher
- *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
- *  Copyright (C) 2023 TheKodeToad <TheKodeToad@proton.me>
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, version 3.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * This file incorporates work covered by the following copyright and
- * permission notice:
- *
- *      Copyright 2013-2021 MultiMC Contributors
- *
- *      Licensed under the Apache License, Version 2.0 (the "License");
- *      you may not use this file except in compliance with the License.
- *      You may obtain a copy of the License at
- *
- *          http://www.apache.org/licenses/LICENSE-2.0
- *
- *      Unless required by applicable law or agreed to in writing, software
- *      distributed under the License is distributed on an "AS IS" BASIS,
- *      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *      See the License for the specific language governing permissions and
- *      limitations under the License.
- */
-
 #include "LaunchController.h"
 #include "Application.h"
 #include "launch/steps/PrintServers.h"
@@ -92,35 +56,29 @@ void LaunchController::decideAccount()
         m_accountToUse = accounts->at(instanceAccountIndex);
     }
 
-    if (!accounts->anyAccountIsValid()) {
-        // Tell the user they need to log in at least one account in order to play.
+    if (!accounts->anyAccountIsValid() && !accounts->count()) {
+        // Tell the user they need to add an account in order to play.
         auto reply = CustomMessageBox::selectable(m_parentWidget, tr("No Accounts"),
-                                                  tr("In order to play Minecraft, you must have at least one Microsoft "
-                                                     "account which owns Minecraft logged in. "
+                                                  tr("In order to play Minecraft, you must have an account configured (Offline or Microsoft). "
                                                      "Would you like to open the account manager to add an account now?"),
                                                   QMessageBox::Information, QMessageBox::Yes | QMessageBox::No)
                          ->exec();
 
         if (reply == QMessageBox::Yes) {
-            // Open the account manager.
             APPLICATION->ShowGlobalSettings(m_parentWidget, "accounts");
         } else if (reply == QMessageBox::No) {
-            // Do not open "profile select" dialog.
             return;
         }
     }
 
-    if (!m_accountToUse && accounts->anyAccountIsValid()) {
-        // If no default account is set, ask the user which one to use.
+    if (!m_accountToUse && accounts->count() > 0) {
         ProfileSelectDialog selectDialog(tr("Which account would you like to use?"), ProfileSelectDialog::GlobalDefaultCheckbox,
                                          m_parentWidget);
 
         selectDialog.exec();
 
-        // Launch the instance with the selected account.
         m_accountToUse = selectDialog.selectedAccount();
 
-        // If the user said to use the account as default, do that.
         if (selectDialog.useAsGlobalDefault() && m_accountToUse) {
             accounts->setDefaultAccount(m_accountToUse);
         }
@@ -129,7 +87,18 @@ void LaunchController::decideAccount()
 
 LaunchDecision LaunchController::decideLaunchMode()
 {
-    if (!m_accountToUse || m_wantedLaunchMode == LaunchMode::Demo) {
+    if (!m_accountToUse) {
+        m_actualLaunchMode = LaunchMode::Demo;
+        return LaunchDecision::Continue;
+    }
+
+    // [تعديل أساسي]: الحسابات الأوفلاين تُطلق في وضع الأوفلاين مباشرة دون فحص الشبكة
+    if (m_accountToUse->accountType() == AccountType::Offline || m_accountToUse->isOffline()) {
+        m_actualLaunchMode = LaunchMode::Offline;
+        return LaunchDecision::Continue;
+    }
+
+    if (m_wantedLaunchMode == LaunchMode::Demo) {
         m_actualLaunchMode = LaunchMode::Demo;
         return LaunchDecision::Continue;
     }
@@ -164,18 +133,16 @@ LaunchDecision LaunchController::decideLaunchMode()
     }
 
     if (state == AccountState::Working) {
-        // refresh is in progress, we need to wait for it to finish to proceed.
         ProgressDialog progDialog(m_parentWidget);
         progDialog.setSkipButton(true, tr("Abort"));
 
-        // TODO: this relies on tasks' synchronous signal dispatching nature
-        // TODO: meaning currentTask can't complete and become null while this code is running
-        // TODO: this code will produce a race condition when tasks become fully async
         auto task = accountToCheck->currentTask();
-        progDialog.execWithTask(task.get());
+        if (task) {
+            progDialog.execWithTask(task.get());
 
-        if (task->getState() == State::AbortedByUser) {
-            return LaunchDecision::Abort;
+            if (task->getState() == State::AbortedByUser) {
+                return LaunchDecision::Abort;
+            }
         }
 
         state = accountToCheck->accountState();
@@ -198,7 +165,7 @@ LaunchDecision LaunchController::decideLaunchMode()
         default:
             m_actualLaunchMode =
                 state == AccountState::Online && m_wantedLaunchMode == LaunchMode::Normal ? LaunchMode::Normal : LaunchMode::Offline;
-            return LaunchDecision::Continue;  // All good to go
+            return LaunchDecision::Continue;
     }
 
     if (reauthenticateAccount(accountToCheck, reauthReason)) {
@@ -308,16 +275,19 @@ void LaunchController::login()
     m_session->launchMode = m_actualLaunchMode;
     m_accountToUse->fillSession(m_session);
 
-    if (m_accountToUse->accountType() != AccountType::Offline) {
+    // [تعديل أساسي]: معالجة الحسابات
+    if (m_accountToUse->accountType() == AccountType::Offline || m_accountToUse->isOffline()) {
+        // الحساب الأوفلاين جاهز تماماً بالجلسة المعرفة، تشغيل مباشر
+        m_session->status = AuthSession::PlayableOffline;
+    } else {
         if (m_actualLaunchMode == LaunchMode::Normal && !m_accountToUse->hasProfile()) {
-            // Now handle setting up a profile name here...
             if (ProfileSetupDialog dialog(m_accountToUse, m_parentWidget); dialog.exec() != QDialog::Accepted) {
                 emitAborted();
                 return;
             }
         }
 
-        if (m_actualLaunchMode == LaunchMode::Offline && m_accountToUse->accountType() != AccountType::Offline) {
+        if (m_actualLaunchMode == LaunchMode::Offline) {
             bool ok = false;
             QString name = m_offlineName;
             if (name.isEmpty()) {
@@ -336,6 +306,10 @@ void LaunchController::login()
 
 bool LaunchController::reauthenticateAccount(const MinecraftAccountPtr& account, const QString& reason)
 {
+    if (account->accountType() == AccountType::Offline || account->isOffline()) {
+        return false;
+    }
+
     auto button = QMessageBox::warning(
         m_parentWidget, tr("Account refresh failed"), tr("%1. Do you want to reauthenticate this account?").arg(reason),
         QMessageBox::StandardButton::Yes | QMessageBox::StandardButton::No, QMessageBox::StandardButton::Yes);
