@@ -46,10 +46,12 @@ jobs:
       CMAKE_PRESET: ${{ matrix.cmake-preset }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Clean Upstream Code
         uses: actions/checkout@v4
         with:
-          submodules: true
+          repository: 'PrismLauncher/PrismLauncher'
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Setup dependencies
         id: setup-dependencies
