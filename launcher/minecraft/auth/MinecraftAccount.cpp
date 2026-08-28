@@ -51,7 +51,7 @@ MinecraftAccountPtr MinecraftAccount::createOffline(const QString& username)
     account->data.minecraftProfile.id = uuidFromUsername(username).toString(QUuid::Id128);
     account->data.minecraftProfile.validity = Validity::Certain;
     
-    // [تعديل أساسي]: تفعيل الملكية وتصريح اللعب الكامل للحساب الأوفلاين
+    // تفعيل الملكية وتصريح اللعب للحساب الأوفلاين
     account->data.minecraftEntitlement.ownsMinecraft = true;
     account->data.minecraftEntitlement.canPlayMinecraft = true;
     account->data.minecraftEntitlement.validity = Validity::Certain;
@@ -78,7 +78,6 @@ bool MinecraftAccount::isOffline() const
 
 bool MinecraftAccount::ownsMinecraft() const
 {
-    // [تعديل أساسي]: إرجاع true دائماً للحسابات الأوفلاين
     if (data.type == AccountType::Offline || isOffline()) {
         return true;
     }
@@ -190,6 +189,7 @@ void MinecraftAccount::authFailed(QString reason)
             // NOTE: this doesn't do much. There was an error of some sort.
         } break;
         case AccountTaskState::STATE_FAILED_HARD: {
+            // [تصحيح]: استدعاء accountType() بالأقواس
             if (accountType() == AccountType::MSA) {
                 data.msaToken.token = QString();
                 data.msaToken.refresh_token = QString();
@@ -236,7 +236,7 @@ bool MinecraftAccount::isActive() const
 
 bool MinecraftAccount::shouldRefresh() const
 {
-    // [تعديل أساسي]: لا تقم بتحديث حسابات الأوفلاين مطلقاً
+    // [تصحيح]: استدعاء isOffline() بالأقواس
     if (data.type == AccountType::Offline || isOffline()) {
         return false;
     }
@@ -287,10 +287,9 @@ void MinecraftAccount::fillSession(AuthSessionPtr session)
     // 'legacy' or 'mojang', depending on account type
     session->user_type = isOffline() ? "legacy" : typeString();
     
+    // [تصحيح]: استخدام بنية AuthSession القياسية في Prism Launcher
     if (isOffline()) {
         session->session = "token:0:" + session->uuid;
-        session->status = AuthSession::PlayableOffline;
-        session->wants_offline = true;
     } else {
         if (!session->access_token.isEmpty()) {
             session->session = "token:" + data.accessToken() + ":" + data.profileId();
