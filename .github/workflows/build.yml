@@ -46,13 +46,26 @@ jobs:
       CMAKE_PRESET: ${{ matrix.cmake-preset }}
 
     steps:
-      - name: Checkout Clean Upstream Code
+      # 1. جلب المستودع الرئيسي بكامل مكتباته المكتملة
+      - name: Checkout Upstream Base with Submodules
         uses: actions/checkout@v4
         with:
           repository: 'PrismLauncher/PrismLauncher'
           submodules: recursive
           fetch-depth: 0
 
+      # 2. جلب كودك أنت المعدّل واستبدال ملفات المصدر به
+      - name: Overlay My Source Code
+        uses: actions/checkout@v4
+        with:
+          path: 'my_code'
+
+      - name: Copy My Code Over Upstream
+        run: |
+          cp -rf my_code/* .
+          rm -rf my_code
+
+      # 3. إكمال خطوات التجميع والبناء
       - name: Setup dependencies
         id: setup-dependencies
         uses: ./.github/actions/setup-dependencies
