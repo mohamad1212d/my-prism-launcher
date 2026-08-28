@@ -1246,7 +1246,7 @@ bool Application::createSetupWizard()
     bool validIcons = m_themeManager->isValidIconTheme(settings()->get("IconTheme").toString());
     
     // [تم التعديل]: إلغاء إجبار صفحة تسجيل الدخول في المعالج
-    bool login = false;
+  
     
     bool themeInterventionRequired = !validWidgets || !validIcons;
     bool wizardRequired = javaRequired || languageRequired || pasteInterventionRequired || themeInterventionRequired || askjava;
