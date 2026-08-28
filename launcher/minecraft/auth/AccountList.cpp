@@ -571,8 +571,7 @@ void AccountList::setListFilePath(QString path, bool autosave)
     m_autosave = autosave;
 }
 
-// [تعديل أساسي]: السماح دائماً دون قيود
-bool AccountList::anyAccountIsValid()
+bool AccountList::anyAccountIsValid() const
 {
     return true;
 }
@@ -584,11 +583,6 @@ bool AccountList::anyAccountOwnsMinecraft() const
 
 bool AccountList::hasOfflineAccounts() const
 {
-    for (auto account : m_accounts) {
-        if (account && (account->accountType() == AccountType::Offline || account->isOffline())) {
-            return true;
-        }
-    }
     return true;
 }
 
@@ -599,7 +593,6 @@ bool AccountList::hasActiveAccount() const
 
 void AccountList::fillQueue()
 {
-    // تخطي الحسابات الأوفلاين حتى لا ترسل طلبات تحديث شبكية
     if (m_defaultAccount && m_defaultAccount->accountType() != AccountType::Offline && m_defaultAccount->shouldRefresh()) {
         auto idToRefresh = m_defaultAccount->internalId();
         m_refreshQueue.push_back(idToRefresh);
