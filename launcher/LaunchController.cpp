@@ -275,11 +275,8 @@ void LaunchController::login()
     m_session->launchMode = m_actualLaunchMode;
     m_accountToUse->fillSession(m_session);
 
-    // [تعديل أساسي]: معالجة الحسابات
-    if (m_accountToUse->accountType() == AccountType::Offline || m_accountToUse->isOffline()) {
-        // الحساب الأوفلاين جاهز تماماً بالجلسة المعرفة، تشغيل مباشر
-        m_session->status = AuthSession::PlayableOffline;
-    } else {
+    // [معالجة الحسابات]: الحساب الأوفلاين جاهز تماماً بالجلسة المعرفة من fillSession
+    if (m_accountToUse->accountType() != AccountType::Offline && !m_accountToUse->isOffline()) {
         if (m_actualLaunchMode == LaunchMode::Normal && !m_accountToUse->hasProfile()) {
             if (ProfileSetupDialog dialog(m_accountToUse, m_parentWidget); dialog.exec() != QDialog::Accepted) {
                 emitAborted();
