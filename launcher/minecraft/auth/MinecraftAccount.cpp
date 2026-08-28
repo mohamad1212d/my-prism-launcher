@@ -66,24 +66,6 @@ QJsonObject MinecraftAccount::saveToJson() const
     return data.saveState();
 }
 
-AccountType MinecraftAccount::accountType() const
-{
-    return data.type;
-}
-
-bool MinecraftAccount::isOffline() const
-{
-    return data.type == AccountType::Offline;
-}
-
-bool MinecraftAccount::ownsMinecraft() const
-{
-    if (data.type == AccountType::Offline || isOffline()) {
-        return true;
-    }
-    return data.minecraftEntitlement.ownsMinecraft;
-}
-
 bool MinecraftAccount::canPlayOnline() const
 {
     return data.type != AccountType::Offline && ownsMinecraft() && data.minecraftProfile.isValid();
@@ -95,16 +77,6 @@ bool MinecraftAccount::canPlayOffline() const
         return !data.minecraftProfile.name.trimmed().isEmpty();
     }
     return data.minecraftProfile.isValid();
-}
-
-QString MinecraftAccount::profileName() const
-{
-    return data.profileName();
-}
-
-QString MinecraftAccount::profileId() const
-{
-    return data.profileId();
 }
 
 AccountState MinecraftAccount::accountState() const
@@ -189,7 +161,6 @@ void MinecraftAccount::authFailed(QString reason)
             // NOTE: this doesn't do much. There was an error of some sort.
         } break;
         case AccountTaskState::STATE_FAILED_HARD: {
-            // [تصحيح]: استدعاء accountType() بالأقواس
             if (accountType() == AccountType::MSA) {
                 data.msaToken.token = QString();
                 data.msaToken.refresh_token = QString();
@@ -236,8 +207,7 @@ bool MinecraftAccount::isActive() const
 
 bool MinecraftAccount::shouldRefresh() const
 {
-    // [تصحيح]: استدعاء isOffline() بالأقواس
-    if (data.type == AccountType::Offline || isOffline()) {
+    if (isOffline()) {
         return false;
     }
 
@@ -287,7 +257,6 @@ void MinecraftAccount::fillSession(AuthSessionPtr session)
     // 'legacy' or 'mojang', depending on account type
     session->user_type = isOffline() ? "legacy" : typeString();
     
-    // [تصحيح]: استخدام بنية AuthSession القياسية في Prism Launcher
     if (isOffline()) {
         session->session = "token:0:" + session->uuid;
     } else {
